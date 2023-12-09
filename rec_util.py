@@ -1,12 +1,14 @@
+from typing import Dict
+
 import numpy as np
 import pandas as pd
 import requests
 
 # Define the URL for movie data
-myurl = "https://liangfgithub.github.io/MovieData/movies.dat?raw=true"
+ratings_data_url = "https://liangfgithub.github.io/MovieData/movies.dat?raw=true"
 
 # Fetch the data from the URL
-response = requests.get(myurl)
+response = requests.get(ratings_data_url)
 
 # Split the data into lines and then split each line using "::"
 movie_lines = response.text.split('\n')
@@ -20,13 +22,14 @@ genres = list(
     sorted(set([genre for genres in movies.genres.unique() for genre in genres.split("|")]))
 )
 
+top_similarities_matrix = pd.read_pickle("top_similarities_matrix.gz")
+
+# Precomputed movies ratings to be used as filler recommendations
+# when myICBF cannot recommend at least ten movies
+ci_movie_ratings = pd.read_csv("ci_movie_ratings.csv", index_col=[0]).rating
 
 def get_displayed_movies():
     return movies.head(100)
-
-
-def get_recommended_movies(new_user_ratings):
-    return movies.head(10)
 
 
 def get_popular_movies(genre: str):
@@ -54,3 +57,63 @@ def get_popular_movies(genre: str):
     }
 
     return movies.iloc[genre_to_popular_movies.get(genre, np.array([]))]
+
+
+def get_recommended_movies(new_user_ratings: Dict[str, int]) -> pd.DataFrame:
+    icbf_input = _convert_ratings_input(new_user_ratings)
+    recommendations = myIBCF(icbf_input)
+    return _convert_ratings_output(recommendations)
+
+
+def _convert_ratings_input(ratings_input: Dict[str, int]) -> np.array:
+    """Convert dict of user ratings into input expected by myIBCF"""
+    n_movies = top_similarities_matrix.shape[0]
+    data = np.zeros(n_movies)
+    data[:] = np.nan
+    ret = pd.Series(data=data, index=top_similarities_matrix.index)
+    for movie_id, rating in ratings_input.items():
+        ret[f"m{movie_id}"] = rating
+    return ret
+
+
+def _convert_ratings_output(ibcf_output) -> pd.DataFrame:
+    """Convert recommendations outputted by myICBF into dataframe with movie_id and title"""
+    movie_ids = [int(x[1:]) for x in ibcf_output.index.values]
+    df = pd.DataFrame(data=movie_ids, columns=["movie_id"]).merge(movies, on="movie_id", how="inner")
+    return df
+
+
+def myIBCF(newuser: pd.Series) -> pd.Series:
+
+    n_movies = top_similarities_matrix.shape[0]
+    user_ratings = np.argwhere(~np.isnan(newuser))
+
+    preds = pd.Series(name="rating", data=np.zeros(n_movies), index=top_similarities_matrix.index)
+
+    for i in range(n_movies):
+        movie = top_similarities_matrix.iloc[i]
+        neighborhood_idx = np.argwhere(~np.isnan(movie).to_numpy())
+
+        user_neighborhood_ratings = np.intersect1d(user_ratings, neighborhood_idx)
+
+        if len(user_neighborhood_ratings) != 0:
+            numerator = np.sum(movie[user_neighborhood_ratings] * newuser[user_neighborhood_ratings])
+            denominator = np.sum(movie[user_neighborhood_ratings])
+
+            preds[i] = numerator / denominator
+
+    # Only include movies that we outputted a prediction for the user has not rated
+    pred_mask = np.logical_and(~np.isclose(preds, 0), np.isnan(newuser))
+    preds = preds[pred_mask]
+
+    preds = preds.sort_values(ascending=False)[:5]
+
+    if len(preds) >= 10:
+        return preds
+
+    # If we don't have enough predictions, include top movies defined by mean rating
+    # Eligible movies are ones we didn't already output and the user has not rated
+    top_movie_mask = np.logical_and(~pred_mask, np.isnan(newuser))
+    top_movies = ci_movie_ratings[top_movie_mask].sort_values(ascending=False)
+
+    return pd.concat([preds, top_movies[:(10-len(preds))]])
