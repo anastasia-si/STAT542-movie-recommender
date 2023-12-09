@@ -106,7 +106,7 @@ def myIBCF(newuser: pd.Series) -> pd.Series:
     pred_mask = np.logical_and(~np.isclose(preds, 0), np.isnan(newuser))
     preds = preds[pred_mask]
 
-    preds = preds.sort_values(ascending=False)[:5]
+    preds = preds.sort_values(ascending=False)
 
     if len(preds) >= 10:
         return preds
