@@ -107,9 +107,8 @@ def myIBCF(newuser: pd.Series) -> pd.Series:
     preds = preds[pred_mask]
 
     preds = preds.sort_values(ascending=False)
-
     if len(preds) >= 10:
-        return preds
+        return preds[:10]
 
     # If we don't have enough predictions, include top movies defined by mean rating
     # Eligible movies are ones we didn't already output and the user has not rated

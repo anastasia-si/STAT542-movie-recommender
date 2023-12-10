@@ -215,7 +215,7 @@ def on_getting_recommendations(style, ratings, ids):
     Output("button-recommend", "disabled"),
     Input({"type": "movie_rating", "movie_id": ALL}, "value"),
 )
-def update_button_recommened_visibility(values):
+def update_button_recommend_visibility(values):
     return not list(filter(None, values))
 
 
